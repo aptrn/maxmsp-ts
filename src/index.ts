@@ -81,19 +81,21 @@ async function replaceInFile(
   filePath: string,
   alias: string,
   packageName: string,
-  effectivePath: string
+  effectivePath: string,
+  config: Config
 ) {
   try {
     let content = await fs.readFile(filePath, "utf8");
 
-    // Construct the new require path based on alias and effectivePath
-    const newRequirePath = `require("lib/${effectivePath}/${alias}_index.js")`;
+    // Construct the new require path based on config.output_path
+    const newRequirePath = config.output_path
+      ? `require("lib/${effectivePath}/${alias}_index.js")`
+      : `require("${alias}_index.js")`; // No lib/ prefix when output_path is empty
 
     // Replace require statements for the specific packageName
-    content = content.replace(
-      new RegExp(`require\\("${packageName}"\\)`, "g"),
-      newRequirePath
-    );
+    content = content
+      .replace(`require("${packageName}")`, newRequirePath)
+      .replace(`require('${packageName}')`, newRequirePath);
 
     await fs.writeFile(filePath, content, "utf8");
     console.log(`Updated require statements in ${filePath}`);
@@ -126,14 +128,16 @@ async function postBuild() {
   const tsConfigOutputDir = await getTsConfigOutputDir();
 
   // Define output directory based on config
-  const outputDir = path.join(tsConfigOutputDir, config.output_path); // Full path for output
+  const outputDir = config.output_path
+    ? path.join(tsConfigOutputDir, config.output_path) // Full path for output
+    : tsConfigOutputDir; // Use tsConfigOutputDir directly if output_path is empty
 
   for (const [
     packageName,
     { alias, files, path: relativePath },
   ] of Object.entries(config.dependencies)) {
     // Use libraryName if alias is empty
-    const effectiveAlias = alias || sanitizeName(packageName); // Sanitize if alias is empty
+    const effectiveAlias = alias || sanitizeName(packageName);
 
     // Use sanitized library name if path is empty, otherwise use provided path
     const effectivePath = relativePath
@@ -147,8 +151,10 @@ async function postBuild() {
       "dist"
     );
 
-    // Construct target directory based on tsconfig output dir and effectivePath
-    const targetDir = path.join(outputDir, effectivePath); // e.g., tsconfigOutputDir/lib/lol
+    // Construct target directory based on whether we have a relative path
+    const targetDir = relativePath
+      ? path.join(outputDir, effectivePath) // e.g., tsconfigOutputDir/lib/lol
+      : outputDir;
 
     // Copy and rename files for each dependency
     await copyAndRenameFiles(sourceDir, targetDir, effectiveAlias, files);
@@ -158,7 +164,8 @@ async function postBuild() {
       tsConfigOutputDir,
       packageName,
       effectiveAlias,
-      effectivePath
+      effectivePath,
+      config
     );
   }
 
@@ -170,7 +177,8 @@ async function replaceRequireStatements(
   baseDir: string,
   packageName: string,
   alias: string,
-  effectivePath: string
+  effectivePath: string,
+  config: Config
 ) {
   try {
     const libFolder = path.join(baseDir, "lib");
@@ -182,7 +190,8 @@ async function replaceRequireStatements(
       if (!filePath.startsWith(libFolder)) {
         // Skip any file in the lib folder
         console.log(`Updating require statements in ${filePath}`);
-        await replaceInFile(filePath, alias, packageName, effectivePath); // Pass effectivePath for replacement
+        // Pass effectivePath and config for replacement
+        await replaceInFile(filePath, alias, packageName, effectivePath, config);
       }
     }
   } catch (error) {
